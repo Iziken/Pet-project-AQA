@@ -31,3 +31,45 @@ export const expectBookingIsCancelled = async (
   await expect(check.pastBookingLocator).toBeVisible();
   await expect(check.pastBookingLocator).toContainText("отменено");
 };
+
+export async function expectBookingSucceeds(bookingPage: BookingPage) {
+  const isSuccess = await bookingPage.waitForBookingStatus();
+  if (!isSuccess) {
+    const errorText = await bookingPage.errorAlert.textContent();
+    throw new Error(`Бронирование не удалось: ${errorText}`);
+  }
+  await expect(bookingPage.successStatus).toBeVisible();
+}
+
+export async function expectBookingFails(bookingPage: BookingPage) {
+  const isSuccess = await bookingPage.waitForBookingStatus();
+  if (isSuccess) {
+    throw new Error(
+      "Бронирование должно было отклониться — слот уже занят, но прошло успешно",
+    );
+  }
+  await expect(bookingPage.errorAlert).toBeVisible();
+}
+
+export async function openBookingDialogForFirstSlot(
+  bookingPage: BookingPage,
+  skillTag: string,
+  hostName: string,
+) {
+  await bookingPage.navigateToHostProfile(skillTag, hostName);
+  await expect(bookingPage.personHeading).toHaveText(hostName);
+
+  await bookingPage.ensureCalendarVisible();
+  await bookingPage.selectFirstSlot();
+  await expect(bookingPage.confirmDialog).toBeVisible();
+}
+
+export async function bookFirstSlot(
+  bookingPage: BookingPage,
+  skillTag: string,
+  hostName: string,
+) {
+  await openBookingDialogForFirstSlot(bookingPage, skillTag, hostName);
+  await bookingPage.confirmBooking();
+  await expectBookingSucceeds(bookingPage);
+}

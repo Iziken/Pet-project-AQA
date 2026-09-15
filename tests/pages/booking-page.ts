@@ -3,24 +3,21 @@ import { ROUTES } from "../helpers/user";
 
 export class BookingPage {
   page: Page;
-  // элементы каталога
+
   filterInput: Locator;
   filterSubmitButton: Locator;
   personHeading: Locator;
+  personCards: Locator;
 
-  // элементы календаря
   calendarDays: Locator;
   calendarTimes: Locator;
 
-  // модалка подтверждения
   confirmDialog: Locator;
   confirmButton: Locator;
   successStatus: Locator;
   errorAlert: Locator;
 
-  // раздел Мои встречи
   upcomingSection: Locator;
-  firstCardName: Locator;
 
   upcomingBookings: Locator;
   pastMeetingsSection: Locator;
@@ -30,6 +27,7 @@ export class BookingPage {
     this.page = page;
     this.filterInput = page.locator("#pomidorqa-catalog-skill-filter");
     this.filterSubmitButton = page.getByRole("button", { name: "Найти" });
+    this.personCards = page.getByTestId("person-card");
     this.personHeading = page.getByRole("heading", { level: 1 });
 
     this.calendarDays = page
@@ -53,16 +51,19 @@ export class BookingPage {
       .locator("section")
       .filter({ hasText: "Прошедшие и отменённые" });
     this.pastBookings = this.pastMeetingsSection.locator("[data-booking-id]");
-    this.firstCardName = this.upcomingBookings.first().locator("p").first();
   }
 
   getPersonCard(name: string): Locator {
-    return this.page.getByTestId("person-card").filter({ hasText: name });
+    return this.personCards.filter({ hasText: name });
   }
 
   async searchBySkill(skillTag: string) {
     await this.filterInput.fill(skillTag);
     await this.filterSubmitButton.click();
+  }
+
+  async gotoCatalog() {
+    await this.page.goto(ROUTES.home);
   }
 
   async openPersonCard(name: string) {
@@ -92,14 +93,11 @@ export class BookingPage {
     return await this.successStatus.isVisible().catch(() => false);
   }
 
-  async loadUpcomingMeetingsAndEnsureData(expectedName: string) {
+  async openUpcomingMeetings(participantName: string) {
     await this.goto();
-    const firstCardName = this.firstCardName;
-    const hasText =
-      (await firstCardName.textContent().catch(() => null))?.includes(
-        expectedName,
-      ) ?? false;
-    if (!hasText) {
+    const booking = this.upcomingBookingByParticipant(participantName);
+    const isVisible = await booking.isVisible().catch(() => false);
+    if (!isVisible) {
       await this.page.reload();
     }
   }

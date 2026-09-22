@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import {
+  cleanupUsersViaApi,
   makeRandom,
   makeUser,
   prepareHost,
-  registerUser,
+  registerUserViaApi,
   UTC_CONTEXT_OPTIONS,
 } from "../helpers/user";
 import { ProfilePage } from "../pages/profile-page";
@@ -42,8 +43,8 @@ test.describe("Каталог: поиск по навыку", () => {
         await expect(hostBookingPage.getPersonCard(host.name)).toHaveCount(0);
       });
 
-      await test.step("Гость: регистрируется в отдельном контексте и ищет по навыку хоста", async () => {
-        await registerUser(guestPage, guest);
+      await test.step("Гость: регистрируется через API и ищет по навыку хоста", async () => {
+        await registerUserViaApi(guestContext.request, guest);
 
         await guestBookingPage.gotoCatalog();
         await guestBookingPage.searchBySkill(skillTag);
@@ -61,8 +62,7 @@ test.describe("Каталог: поиск по навыку", () => {
         await expect(guestBookingPage.personCards).toHaveCount(0);
       });
     } finally {
-      await hostContext.close();
-      await guestContext.close();
+      await cleanupUsersViaApi([hostContext, guestContext]);
     }
   });
 
@@ -84,16 +84,16 @@ test.describe("Каталог: поиск по навыку", () => {
     const guestBookingPage = new BookingPage(guestPage);
 
     try {
-      await test.step("Хост: регистрируется и добавляет уникальный навык, но не добавляет слот", async () => {
-        await registerUser(hostPage, host);
+      await test.step("Хост: регистрируется через API и добавляет уникальный навык, но не добавляет слот", async () => {
+        await registerUserViaApi(hostContext.request, host);
 
         await hostProfile.goto();
         await hostProfile.addSkill(skillTag, "can_help");
         await expect(hostProfile.canHelpSkills).toContainText(skillTag);
       });
 
-      await test.step("Гость: регистрируется в отдельном контексте и ищет по навыку хоста", async () => {
-        await registerUser(guestPage, guest);
+      await test.step("Гость: регистрируется через API и ищет по навыку хоста", async () => {
+        await registerUserViaApi(guestContext.request, guest);
 
         await guestBookingPage.gotoCatalog();
         await guestBookingPage.searchBySkill(skillTag);
@@ -104,8 +104,7 @@ test.describe("Каталог: поиск по навыку", () => {
         await expect(guestBookingPage.getPersonCard(host.name)).toHaveCount(0);
       });
     } finally {
-      await hostContext.close();
-      await guestContext.close();
+      await cleanupUsersViaApi([hostContext, guestContext]);
     }
   });
 });

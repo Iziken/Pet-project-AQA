@@ -71,6 +71,7 @@ export class BookingPage {
   }
 
   async navigateToHostProfile(skillTag: string, hostName: string) {
+    await this.gotoCatalog();
     await this.searchBySkill(skillTag);
     await this.openPersonCard(hostName);
   }
@@ -93,13 +94,14 @@ export class BookingPage {
     return await this.successStatus.isVisible().catch(() => false);
   }
 
-  async openUpcomingMeetings(participantName: string) {
+  async openUpcomingMeetings(participantName: string): Promise<Locator> {
     await this.goto();
     const booking = this.upcomingBookingByParticipant(participantName);
     const isVisible = await booking.isVisible().catch(() => false);
     if (!isVisible) {
       await this.page.reload();
     }
+    return booking;
   }
 
   async selectFirstSlot() {

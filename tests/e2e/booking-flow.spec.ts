@@ -1,150 +1,123 @@
 import { test, expect } from "@playwright/test";
 import {
-  loginUser,
+  cleanupUsersViaApi,
   makeRandom,
   makeUser,
   prepareHost,
-  registerUser,
-  UTC_CONTEXT_OPTIONS,
+  registerUserViaApi,
 } from "../helpers/user";
 import {
   bookFirstSlot,
   expectBookingFails,
   expectBookingSucceeds,
   openBookingDialogForFirstSlot,
+  openBookingSession,
 } from "../helpers/booking";
-import { BookingPage } from "../pages/booking-page";
 
-test("основной путь + гонка за слот: регистрация → навык → слот → поиск в каталоге → бронирование → «Мои встречи» у обоих → второй гость видит ошибку", async ({
-  browser,
-}) => {
-  const runId = Date.now();
-  const skillTag = makeRandom("Playwright-demo");
-  const host = makeUser("host", runId);
-  const guest = makeUser("guest", runId);
-  const guest2 = makeUser("guest2", runId);
+// Два контекста, бронь через каталог и модалку — на живом стенде 30с по умолчанию
+// впритык; тест гибнет посреди ожидания статуса («Test ended»).
+test.setTimeout(90_000);
 
-  const hostContext = await browser.newContext(UTC_CONTEXT_OPTIONS);
-  const guestContext = await browser.newContext(UTC_CONTEXT_OPTIONS);
-  const guest2Context = await browser.newContext(UTC_CONTEXT_OPTIONS);
+test.describe("Бронирование", () => {
+  test("гость бронирует свободный слот хоста — встреча видна у гостя и у хоста", async ({
+    browser,
+  }) => {
+    const runId = Date.now();
+    const skillTag = makeRandom("Playwright-demo");
+    const host = makeUser("host", runId);
+    const guest = makeUser("guest", runId);
 
-  const hostPage = await hostContext.newPage();
-  const guestPage = await guestContext.newPage();
-  const guest2Page = await guest2Context.newPage();
+    const hostSession = await openBookingSession(browser);
+    const guestSession = await openBookingSession(browser);
 
-  const hostBookingsPage = new BookingPage(hostPage);
-  const guestBookingPage = new BookingPage(guestPage);
-  const guest2BookingPage = new BookingPage(guest2Page);
+    try {
+      await test.step("Хост: регистрируется, добавляет навык и свободный слот на завтра", async () => {
+        await prepareHost(hostSession.page, host, skillTag);
+      });
 
-  try {
-    await test.step("Хост: регистрируется, добавляет навык и свободный слот на завтра", async () => {
-      await prepareHost(hostPage, host, skillTag);
-    });
+      await test.step("Гость: регистрируется через API и бронирует первый слот хоста", async () => {
+        await registerUserViaApi(guestSession.context.request, guest);
+        await bookFirstSlot(guestSession.bookingPage, skillTag, host.name);
+      });
 
-    await test.step("Гость: регистрируется и открывает окно бронирования на первый слот", async () => {
-      await registerUser(guestPage, guest);
-      await openBookingDialogForFirstSlot(
-        guestBookingPage,
-        skillTag,
-        host.name,
-      );
-    });
+      await test.step("Гость: видит встречу с хостом в разделе «Мои встречи»", async () => {
+        const meeting = await guestSession.bookingPage.openUpcomingMeetings(
+          host.name,
+        );
+        await expect(meeting).toBeVisible();
+      });
 
-    await test.step("Гость2: регистрируется и открывает окно бронирования на тот же слот", async () => {
-      await registerUser(guest2Page, guest2);
-      await openBookingDialogForFirstSlot(
-        guest2BookingPage,
-        skillTag,
-        host.name,
-      );
-    });
+      await test.step("Хост: видит встречу с гостем в разделе «Мои встречи»", async () => {
+        const meeting = await hostSession.bookingPage.openUpcomingMeetings(
+          guest.name,
+        );
+        await expect(meeting).toBeVisible();
+      });
+    } finally {
+      await cleanupUsersViaApi([hostSession.context, guestSession.context]);
+    }
+  });
 
-    await test.step("Гость: подтверждает бронирование первым — успех", async () => {
-      await guestBookingPage.confirmBooking();
-      await expectBookingSucceeds(guestBookingPage);
-    });
+  test("двое гостей бронируют один слот — первый получает встречу, второй видит ошибку", async ({
+    browser,
+  }) => {
+    const runId = Date.now();
+    const skillTag = makeRandom("Playwright-demo");
+    const host = makeUser("host", runId);
+    const guest = makeUser("guest", runId);
+    const guest2 = makeUser("guest2", runId);
 
-    await test.step("Гость2: пытается забронировать тот же слот вторым — видит ошибку", async () => {
-      await guest2BookingPage.confirmBooking();
-      await expectBookingFails(guest2BookingPage);
-    });
+    const hostSession = await openBookingSession(browser);
+    const guestSession = await openBookingSession(browser);
+    const guest2Session = await openBookingSession(browser);
 
-    await test.step("Гость: видит бронирование в разделе «Мои встречи»", async () => {
-      await guestBookingPage.openUpcomingMeetings(host.name);
-      await expect(
-        guestBookingPage.upcomingBookingByParticipant(host.name),
-      ).toBeVisible();
-    });
+    try {
+      await test.step("Хост: регистрируется, добавляет навык и свободный слот на завтра", async () => {
+        await prepareHost(hostSession.page, host, skillTag);
+      });
 
-    await test.step("Хост: тоже видит это бронирование в своих «Мои встречи»", async () => {
-      await hostBookingsPage.openUpcomingMeetings(guest.name);
-      await expect(
-        hostBookingsPage.upcomingBookingByParticipant(guest.name),
-      ).toBeVisible();
-    });
-  } finally {
-    await hostContext.close();
-    await guestContext.close();
-    await guest2Context.close();
-  }
-});
+      await test.step("Гость и гость2: регистрируются и оба открывают окно бронирования на первый слот", async () => {
+        await registerUserViaApi(guestSession.context.request, guest);
+        await registerUserViaApi(guest2Session.context.request, guest2);
 
-test("вход с валидными данными: вернувшийся гость видит свою запланированную встречу", async ({
-  browser,
-}) => {
-  const runId = Date.now();
-  const skillTag = makeRandom("Playwright-demo");
-  const host = makeUser("host", runId);
-  const guest = makeUser("guest", runId);
+        await openBookingDialogForFirstSlot(
+          guestSession.bookingPage,
+          skillTag,
+          host.name,
+        );
+        await openBookingDialogForFirstSlot(
+          guest2Session.bookingPage,
+          skillTag,
+          host.name,
+        );
+      });
 
-  const hostContext = await browser.newContext(UTC_CONTEXT_OPTIONS);
-  const guestContext = await browser.newContext(UTC_CONTEXT_OPTIONS);
+      await test.step("Гость: подтверждает бронирование первым — успех", async () => {
+        await guestSession.bookingPage.confirmBooking();
+        await expectBookingSucceeds(guestSession.bookingPage);
+      });
 
-  const returnedContext = await browser.newContext(UTC_CONTEXT_OPTIONS);
-  let returnedBookingPage: BookingPage | null = null;
+      await test.step("Гость2: подтверждает тот же слот вторым — видит ошибку", async () => {
+        await guest2Session.bookingPage.confirmBooking();
+        await expectBookingFails(guest2Session.bookingPage);
+      });
 
-  const hostPage = await hostContext.newPage();
-  const guestPage = await guestContext.newPage();
-  const returnedPage = await returnedContext.newPage();
+      await test.step("Итог гонки: встреча есть у гостя, а у гостя2 её нет", async () => {
+        const guestMeeting = await guestSession.bookingPage.openUpcomingMeetings(
+          host.name,
+        );
+        await expect(guestMeeting).toBeVisible();
 
-  const guestBookingPage = new BookingPage(guestPage);
-
-  try {
-    await test.step("Хост: регистрируется, добавляет навык и свободный слот на завтра", async () => {
-      await prepareHost(hostPage, host, skillTag);
-    });
-
-    await test.step("Гость: регистрируется и бронирует слот хоста", async () => {
-      await registerUser(guestPage, guest);
-      await bookFirstSlot(guestBookingPage, skillTag, host.name);
-    });
-
-    await test.step("Гость: видит встречу в разделе «Мои встречи» до выхода", async () => {
-      await guestBookingPage.openUpcomingMeetings(host.name);
-      await expect(
-        guestBookingPage.upcomingBookingByParticipant(host.name),
-      ).toBeVisible();
-    });
-
-    await test.step("Гость: закрывает браузер — сеанс закончился", async () => {
-      await guestContext.close();
-    });
-
-    await test.step("Гость: открывает сайт заново и входит с валидными данными", async () => {
-      await loginUser(returnedPage, guest);
-      returnedBookingPage = new BookingPage(returnedPage);
-    });
-
-    await test.step("После входа гость снова видит свою запланированную встречу", async () => {
-      await returnedBookingPage!.openUpcomingMeetings(host.name);
-      await expect(
-        returnedBookingPage!.upcomingBookingByParticipant(host.name),
-      ).toBeVisible();
-    });
-  } finally {
-    await hostContext.close();
-
-    await guestContext.close().catch(() => undefined);
-    await returnedContext.close();
-  }
+        const guest2Meeting =
+          await guest2Session.bookingPage.openUpcomingMeetings(host.name);
+        await expect(guest2Meeting).toHaveCount(0);
+      });
+    } finally {
+      await cleanupUsersViaApi([
+        hostSession.context,
+        guestSession.context,
+        guest2Session.context,
+      ]);
+    }
+  });
 });

@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import {
+  cleanupUsersViaApi,
   makeRandom,
   makeUser,
   prepareHost,
-  registerUser,
+  registerUserViaApi,
   UTC_CONTEXT_OPTIONS,
 } from "../helpers/user";
 import {
@@ -12,6 +13,11 @@ import {
   expectEventually,
 } from "../helpers/booking";
 import { BookingPage } from "../pages/booking-page";
+
+// Сценарий длинный: подготовка хоста, бронь, отмена и два reload-цикла
+// expectEventually — на живом стенде 30с по умолчанию не хватает, тест гибнет
+// посреди ожидания статуса («Test ended»).
+test.setTimeout(90_000);
 
 test("отмена встречи гостем, после reload отмену видят гость и хост", async ({
   browser,
@@ -35,8 +41,8 @@ test("отмена встречи гостем, после reload отмену �
       await prepareHost(hostPage, host, skillTag);
     });
 
-    await test.step("Гость: регистрируется и бронирует слот хоста", async () => {
-      await registerUser(guestPage, guest);
+    await test.step("Гость: регистрируется через API и бронирует слот хоста", async () => {
+      await registerUserViaApi(guestContext.request, guest);
       await bookFirstSlot(guestBookingPage, skillTag, host.name);
     });
 
@@ -73,7 +79,6 @@ test("отмена встречи гостем, после reload отмену �
       );
     });
   } finally {
-    await hostContext.close();
-    await guestContext.close();
+    await cleanupUsersViaApi([hostContext, guestContext]);
   }
 });

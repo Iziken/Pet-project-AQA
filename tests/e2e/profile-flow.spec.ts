@@ -1,5 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { makeUser, registerUser, type TestUser } from "../helpers/user";
+import {
+  cleanupUsersViaApi,
+  makeUser,
+  registerUserViaApi,
+  type TestUser,
+} from "../helpers/user";
 import { ProfilePage } from "../pages/profile-page";
 
 test.describe("Профиль: действия с полями", () => {
@@ -7,9 +12,13 @@ test.describe("Профиль: действия с полями", () => {
 
   test.beforeEach(async ({ page }) => {
     const user: TestUser = makeUser("hw8", Date.now());
-    await registerUser(page, user);
+    await registerUserViaApi(page.context().request, user);
     profile = new ProfilePage(page);
     await profile.goto();
+  });
+
+  test.afterEach(async ({ page }) => {
+    await cleanupUsersViaApi([page.context()]);
   });
 
   test("имя: вводим новое и сохраняем", async ({ page }) => {

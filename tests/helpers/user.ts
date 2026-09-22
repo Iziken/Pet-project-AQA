@@ -1,5 +1,11 @@
-import { expect, type Page } from "@playwright/test";
+import {
+  expect,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
 import { ProfilePage } from "../pages/profile-page";
+import { RegisterPage } from "../pages/register-page";
 import { SlotsPage } from "../pages/slots-page";
 
 export const ROUTES = {
@@ -21,6 +27,14 @@ export type TestUser = {
   password: string;
 };
 
+export type RegisteredParticipant = {
+  id: string;
+  name: string;
+  email: string;
+};
+
+const TEST_ACCOUNTS_ENDPOINT = "/api/pomidorqa/test/accounts";
+
 function randomSuffix(): string {
   return Math.random().toString(36).slice(2, 6);
 }
@@ -37,19 +51,56 @@ export function makeRandom(prefix: string) {
   return `${prefix}-${Date.now()}-${randomSuffix()}`;
 }
 
-export async function registerUser(page: Page, user: TestUser) {
-  const registerNameInput = (page: Page) => page.getByLabel("Имя");
-  const registerEmailInput = (page: Page) => page.getByLabel("Email");
-  const registerPasswordInput = (page: Page) => page.getByLabel("Пароль");
-  const registerSubmitButton = (page: Page) =>
-    page.getByRole("button", { name: "Зарегистрироваться" });
-
-  await page.goto(ROUTES.register);
-  await registerNameInput(page).fill(user.name);
-  await registerEmailInput(page).fill(user.email);
-  await registerPasswordInput(page).fill(user.password);
-  await registerSubmitButton(page).click();
+export async function registerUser(page: Page, user: TestUser): Promise<void> {
+  const registerPage = new RegisterPage(page);
+  await registerPage.goto();
+  await registerPage.fillForm(user);
+  await registerPage.submit();
   await expect(page).toHaveURL(/\/pomidorqa\/?$/);
+}
+
+export async function registerUserViaApi(
+  request: APIRequestContext,
+  user: TestUser,
+): Promise<RegisteredParticipant> {
+  const response = await request.post(TEST_ACCOUNTS_ENDPOINT, {
+    data: user,
+  });
+
+  if (response.status() !== 201) {
+    throw new Error(
+      `Регистрация ${user.email} не удалась: ${response.status()} ${await response.text()}`,
+    );
+  }
+
+  return response.json();
+}
+
+export async function deleteUserViaApi(
+  request: APIRequestContext,
+): Promise<void> {
+  const response = await request.delete(TEST_ACCOUNTS_ENDPOINT);
+
+  if (response.status() !== 200) {
+    throw new Error(
+      `Удаление аккаунта не удалось: ${response.status()} ${await response.text()}`,
+    );
+  }
+}
+
+export async function cleanupUsersViaApi(
+  contexts: BrowserContext[],
+): Promise<void> {
+  const results = await Promise.allSettled(
+    contexts.map((context) => deleteUserViaApi(context.request)),
+  );
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.warn("Не удалось удалить тестового участника:", result.reason);
+    }
+  }
+
+  await Promise.all(contexts.map((context) => context.close()));
 }
 
 export async function prepareHost(
@@ -58,7 +109,7 @@ export async function prepareHost(
   skillTag: string,
   slotTime = "12:00",
 ) {
-  await registerUser(page, user);
+  await registerUserViaApi(page.context().request, user);
 
   const profile = new ProfilePage(page);
   await profile.goto();

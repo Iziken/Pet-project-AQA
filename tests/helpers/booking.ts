@@ -1,5 +1,25 @@
-import { expect } from "@playwright/test";
+import {
+  expect,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
 import { BookingPage } from "../pages/booking-page";
+import { UTC_CONTEXT_OPTIONS } from "./user";
+
+export type BookingParticipant = {
+  context: BrowserContext;
+  page: Page;
+  bookingPage: BookingPage;
+};
+
+export async function openBookingSession(
+  browser: Browser,
+): Promise<BookingParticipant> {
+  const context = await browser.newContext(UTC_CONTEXT_OPTIONS);
+  const page = await context.newPage();
+  return { context, page, bookingPage: new BookingPage(page) };
+}
 
 export async function expectEventually(
   refresh: () => Promise<unknown>,

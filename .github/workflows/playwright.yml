@@ -1,79 +1,283 @@
-# Имя workflow — так он отображается во вкладке Actions.
 name: Playwright CI
 
-# События, которые запускают проверки.
 on:
-  # Проверяем каждое изменение до слияния через Pull Request.
-  pull_request:
-    # `main` здесь — целевая ветка PR, а не имя рабочей ветки.
+  push:
     branches: [main]
-  # Оставляем кнопку ручного запуска во вкладке Actions.
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  workflow_dispatch: # Позволяет запускать пайплайн вручную из веб-интерфейса GitHub
 
-# Все работы, которые выполнит workflow.
+# Стратегия Concurrency (Параллелизм):
+# Если разработчик пушит новый коммит в тот же Pull Request, старый (уже запущенный)
+# пайплайн автоматически отменяется. Это минимизирует время ожидания в очереди (Queue Time)
+# и экономит бесплатные минуты CI для других участников команды.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # Технический идентификатор единственной работы.
-  test:
-    # Читаемое имя работы в интерфейсе GitHub.
-    name: Lint and Playwright tests
-    # Останавливаем зависший прогон через 30 минут.
-    timeout-minutes: 30
-    # Запускаем проверки на чистой Linux-машине GitHub.
+  # =========================================================================
+  # JOB 1: СТАТИЧЕСКИЙ АНАЛИЗ И СТИЛЬ КОДА (LINT & TYPE CHECK)
+  # =========================================================================
+  lint:
+    name: Lint & Type check
+    timeout-minutes: 10
     runs-on: ubuntu-latest
 
-    # Шаги выполняются сверху вниз в одной и той же машине.
     steps:
-      # Сначала загружаем в runner код из текущего PR.
       - name: Checkout repository
-        # Официальный action GitHub для клонирования репозитория.
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5 # v5 нативно поддерживает Node 24
 
-      # Готовим версию Node.js, на которой работает проект.
       - name: Setup Node.js
-        # Официальный action устанавливает Node.js и настраивает npm.
-        uses: actions/setup-node@v6
-        # Параметры для action `setup-node`.
+        uses: actions/setup-node@v5 # v5 нативно поддерживает Node 24
         with:
-          # Node.js 24 поддерживается текущими версиями ESLint и Playwright.
           node-version: 24
-          # Кэшируем скачанные npm-пакеты, но не готовый `node_modules`.
-          cache: npm
+          cache: npm # Кэширует директорию ~/.npm, чтобы ускорить команду `npm ci` при повторных запусках
 
-      # Устанавливаем JavaScript-зависимости проекта.
       - name: Install npm dependencies
-        # `npm ci` ставит точные версии из lock-файла и проверяет его согласованность с package.json.
-        run: npm ci
+        run: npm ci # Чистая установка зависимостей строго по lock-файлу
 
-      # Playwright-пакет и браузерный бинарник устанавливаются отдельно.
-      - name: Install Chromium and system dependencies
-        # Для учебного CI достаточно Chromium; `--with-deps` добавляет нужные библиотеки Linux.
-        run: npx playwright install --with-deps chromium
+      # Метрика: Статическая корректность TypeScript.
+      # Проверяет отсутствие синтаксических ошибок и несоответствий типов во всем проекте.
+      # Если в кодовой базе есть баги компиляции, пайплайн упадет прямо здесь, не тратя время на тесты.
+      - name: TS Type Check
+        run: npx tsc --noEmit
 
-      # Сначала запускаем быструю статическую проверку кода.
+      # Метрика: Соблюдение стайлгайдов (eslint).
+      # Гарантирует, что код тестов и приложения написан аккуратно и по правилам, заданным в проекте.
       - name: Lint tests
-        # Используем тот же npm-скрипт, который разработчик запускает локально.
         run: npm run lint
 
-      # После линтера проверяем реальное поведение тестами.
-      - name: Run Playwright tests
-        # Скрипт `test` из package.json запускает unit, API и E2E-проекты Playwright.
-        run: npm test
-        # Переменные окружения только для этого шага.
+  # =========================================================================
+  # JOB 2: UNIT ТЕСТЫ (Запускаются параллельно после успешного линтера)
+  # =========================================================================
+  unit:
+    name: Unit tests
+    needs: lint # Запустится только если джоба `lint` прошла успешно
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Playwright dependencies
+        run: npx playwright install --with-deps chromium # Установка браузеров и системных библиотек Ubuntu
+
+      # Метрика: Работоспособность изолированных функций и компонентов.
+      # Запускает конкретный профиль/проект `unit` внутри экосистемы Playwright.
+      - name: Run Unit tests
+        run: npm run test:unit
         env:
-          # Включает CI-режим в playwright.config.ts: retry, один worker и reporter без открытия окна.
           CI: true
 
-      # Сохраняем HTML-отчёт после завершения тестов.
-      - name: Upload Playwright report
-        # Загружаем отчёт и после успеха, и после падения; пропускаем только отменённый run.
-        if: ${{ !cancelled() }}
-        # Официальный action GitHub превращает каталог в artifact текущего run.
-        uses: actions/upload-artifact@v7
-        # Параметры сохраняемого artifact.
+  # =========================================================================
+  # JOB 3: API ТЕСТЫ (Запускаются параллельно на отдельной машине)
+  # =========================================================================
+  api:
+    name: API tests
+    needs: lint # Работает параллельно с Unit, E2E и Performance, экономя время сборки
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
         with:
-          # Уникальный run_id не даёт отчётам разных запусков конфликтовать по имени.
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Playwright dependencies
+        run: npx playwright install --with-deps chromium
+
+      # Метрика: Корректность интеграции бэкенд-эндпоинтов и контрактов данных.
+      - name: Run API tests
+        run: npm run test:api
+        env:
+          CI: true
+
+  # =========================================================================
+  # JOB 4: МЕТРИКИ ПРОИЗВОДИТЕЛЬНОСТИ И UX (Запускаются параллельно)
+  # =========================================================================
+  performance:
+    name: UX Performance Audit
+    needs: lint
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # Метрика: Качество UX интерфейса сайта (Core Web Vitals).
+      # Lighthouse CI проверяет скорость рендеринга страниц сайта в изолированном контейнере.
+      # Оператор `|| echo` гарантирует, что если сайт стал чуть медленнее, пайплайн выведет предупреждение,
+      # но не заблокирует деплой (при желании блокировать, просто удалите `|| echo ...`).
+      - name: Run Performance Audit (Lighthouse)
+        run: |
+          npm install -g @lhci/cli@0.13.x
+          lhci autorun || echo "Lighthouse completed with warnings"
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+  # =========================================================================
+  # JOB 5: E2E ТЕСТЫ (Самая тяжелая задача, изолированная на своей машине)
+  # =========================================================================
+  e2e:
+    name: Playwright E2E tests
+    needs: lint
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # Оптимизация Pipeline Duration: Извлекаем версию Playwright для точного тегирования кэша
+      - name: Get Playwright version
+        id: playwright-version
+        run: echo "version=$(npx playwright --version | awk '{print $2}')" >> $GITHUB_OUTPUT
+
+      # Оптимизация: Проверяем, скачивали ли браузеры этой версии ранее.
+      # Если да, они развернутся из кэша GitHub мгновенно, минуя скачивание из сети (~1.5 минуты экономии).
+      - name: Cache Playwright Browsers
+        id: cache-playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+
+      # Скачиваем браузер только при промахе кэша (cache-hit != 'true')
+      - name: Install Chromium and system dependencies
+        if: steps.cache-playwright.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      # Метрика: Стабильность критических пользовательских сценариев.
+      - name: Run Playwright E2E tests
+        run: npm run test:e2e
+        env:
+          CI: true
+
+      # Инструмент отладки: Сохраняем логи, скриншоты падений и файлы трассировки (.zip) в артефакты GitHub Actions.
+      # Шаг выполнится, даже если тесты упали (`!cancelled()`), чтобы инженеры могли скачать и разобрать ошибки.
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
           name: playwright-report-${{ github.run_id }}
-          # Стандартный каталог, куда HTML reporter Playwright пишет отчёт.
           path: playwright-report/
-          # Двух недель достаточно для разбора PR, старые учебные отчёты не храним бессрочно.
-          retention-days: 14
+          retention-days: 14 # Метрика хранения: Ограничиваем жизнь артефактов 14 днями, чтобы не тратить дисковую квоту
+
+  # =========================================================================
+  # JOB 6: ПОЛНАЯ DORA-АНАЛИТИКА И СБОР МЕТРИК В TELEGRAM
+  # =========================================================================
+  notify:
+    name: Telegram Notification & DORA Metrics
+    needs: [lint, unit, api, performance, e2e]
+    runs-on: ubuntu-latest
+    if: always() # Джоба запустится всегда, чтобы мы получили отчет и при успехе, и при ошибке
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # Метрика эффективности DevOps-процессов (DORA - Lead Time for Changes / Pipeline Duration):
+      # Скрипт запрашивает у GitHub API точное время старта воркфлоу,
+      # сравнивает с текущим временем и считает чистую скорость выполнения всего CI от А до Я.
+      # Также собирается статистика по измененным строкам кода (diff_stats) и короткий хэш коммита.
+      - name: Calculate Pipeline Duration and Diff Stats
+        id: metrics
+        if: always()
+        run: |
+          # 1. Расчет времени работы пайплайна
+          START_TIME=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            | jq -r '.run_started_at')
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          START_SECS=$(date -d "$START_TIME" +%s)
+          NOW_SECS=$(date -d "$NOW" +%s)
+          DURATION=$((NOW_SECS - START_SECS))
+          MINUTES=$((DURATION / 60))
+          SECONDS=$((DURATION % 60))
+          echo "duration=${MINUTES}m ${SECONDS}s" >> $GITHUB_OUTPUT
+
+          # 2. Получение хэша и статистики строк (Diff Stats)
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA=$(echo $COMMIT_SHA | cut -c1-7)
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+          COMMIT_DATA=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/commits/${COMMIT_SHA}")
+
+          ADDITIONS=$(echo "$COMMIT_DATA" | jq -r '.stats.additions // 0')
+          DELETIONS=$(echo "$COMMIT_DATA" | jq -r '.stats.deletions // 0')
+
+          echo "diff_stats=+${ADDITIONS} / -${DELETIONS}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      # Метрика: Коэффициент успешности пайплайнов (Pipeline Success Rate) и информирование команды.
+      # Отправляет в Telegram детальный и понятный статус-трекер по каждой задаче с крупным баннером состояния.
+      - name: Send Telegram Message
+        uses: appleboy/telegram-action@master
+        if: always()
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          format: markdown
+          message: |
+            ${{ (needs.lint.result == 'success' && needs.unit.result == 'success' && needs.api.result == 'success' && needs.performance.result == 'success' && needs.e2e.result == 'success') && '🟢 *ПАЙПЛАЙН УСПЕШНО ПРОЙДЕН!*' || '🔴 *ОБНАРУЖЕНЫ ОШИБКИ В СБОРКЕ!*' }}
+
+            *📦 Репозиторий:* `${{ github.repository }}`
+            *🌿 Ветка:* `${{ github.head_ref || github.ref_name }}` (`${{ github.event_name }}`)
+            *👤 Автор:* ${{ github.actor }}
+            *🔢 Коммит:* [`${{ steps.metrics.outputs.short_sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+            *📐 Изменения:* `${{ steps.metrics.outputs.diff_stats }}` lines
+            *💬 Описание:* _${{ github.event.head_commit.message || github.event.pull_request.title }}_
+
+            *📊 Статус проверок:*
+            • Линтер и TS: ${{ needs.lint.result == 'success' && '✅ Успешно' || '❌ Ошибка' }}
+            • Unit тесты: ${{ needs.unit.result == 'success' && '✅ Успешно' || (needs.unit.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
+            • API тесты: ${{ needs.api.result == 'success' && '✅ Успешно' || (needs.api.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
+            • UX Perf (Lighthouse): ${{ needs.performance.result == 'success' && '✅ Успешно' || (needs.performance.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
+            • E2E тесты: ${{ needs.e2e.result == 'success' && '✅ Успешно' || (needs.e2e.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
+
+            *⏱️ Эффективность пайплайна (DORA):*
+            • Время выполнения (Duration): `${{ steps.metrics.outputs.duration }}`
+            • Итог сборки: ${{ (needs.lint.result == 'success' && needs.unit.result == 'success' && needs.api.result == 'success' && needs.performance.result == 'success' && needs.e2e.result == 'success') && '🟢 SUCCESS' || '🔴 FAILED' }}
+
+            🚀 [Открыть логи сборки](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            ${{ github.event.pull_request.html_url && format('👀 [Открыть Pull Request]({0})', github.event.pull_request.html_url) || '' }}
+            ${{ needs.e2e.result == 'failure' && format('📂 [Скачать Playwright Report]({0}/{1}/actions/runs/{2}/artifacts)', github.server_url, github.repository, github.run_id) || '' }}

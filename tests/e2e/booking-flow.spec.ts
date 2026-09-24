@@ -14,8 +14,6 @@ import {
   openBookingSession,
 } from "../helpers/booking";
 
-// Два контекста, бронь через каталог и модалку — на живом стенде 30с по умолчанию
-// впритык; тест гибнет посреди ожидания статуса («Test ended»).
 test.setTimeout(90_000);
 
 test.describe("Бронирование", () => {
@@ -103,9 +101,8 @@ test.describe("Бронирование", () => {
       });
 
       await test.step("Итог гонки: встреча есть у гостя, а у гостя2 её нет", async () => {
-        const guestMeeting = await guestSession.bookingPage.openUpcomingMeetings(
-          host.name,
-        );
+        const guestMeeting =
+          await guestSession.bookingPage.openUpcomingMeetings(host.name);
         await expect(guestMeeting).toBeVisible();
 
         const guest2Meeting =

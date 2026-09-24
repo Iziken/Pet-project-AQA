@@ -8,10 +8,8 @@ import {
 } from "../helpers/user";
 import { HeaderPage } from "../pages/header-page";
 
-// R4.6 (docs/requirements.md, п.4): успешный вход держит сессию, выход её закрывает.
 test.describe("Вход и выход", () => {
   test.afterEach(async ({ request }) => {
-    // Сессия request-фикстуры независима от браузера: выход в UI ей не мешает.
     try {
       await deleteUserViaApi(request);
     } catch (err) {
@@ -61,5 +59,4 @@ test.describe("Вход и выход", () => {
       await expect(page).toHaveURL(ROUTES.login);
     });
   });
-
 });

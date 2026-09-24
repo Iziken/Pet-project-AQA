@@ -9,8 +9,6 @@ import {
 } from "../helpers/user";
 import { BookingPage } from "../pages/booking-page";
 
-// R3.1–R3.4 (docs/requirements.md, п.3 «Роли»): гость без аккаунта смотрит
-// каталог и страницу участника, но не бронирует и не входит в приватные разделы.
 test.describe("Гость: доступ без регистрации", () => {
   test("гость находит участника в каталоге и видит его свободные слоты", async ({
     browser,

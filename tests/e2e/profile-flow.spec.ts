@@ -128,6 +128,23 @@ test.describe("Профиль: действия с полями", () => {
     });
   });
 
+  test("негатив: дубликат навыка не создаёт вторую запись", async ({ page }) => {
+    const skillTag = `DupSkill-${Date.now()}`;
+
+    await test.step("Добавляем навык «могу помочь»", async () => {
+      await profile.addSkill(skillTag, "can_help");
+      await expect(profile.skillChip(skillTag)).toBeVisible();
+    });
+
+    await test.step("Пытаемся добавить тот же навык того же типа ещё раз", async () => {
+      await profile.addSkill(skillTag, "can_help");
+    });
+
+    await test.step("Дубликат отброшен: запись с этим навыком одна", async () => {
+      await expect(profile.skillChip(skillTag)).toHaveCount(1);
+    });
+  });
+
   test("форма профиля: три поля сохраняются за один раз", async ({ page }) => {
     const runId = Date.now();
     const name = `Тимур Тестовый ${runId}`;

@@ -15,6 +15,7 @@ export const ROUTES = {
   profile: "/pomidorqa/profile",
   slots: "/pomidorqa/profile/slots",
   booking: "/pomidorqa/bookings",
+  people: "/pomidorqa/people",
 };
 
 export const UTC_CONTEXT_OPTIONS = {
@@ -56,7 +57,9 @@ export async function registerUser(page: Page, user: TestUser): Promise<void> {
   await registerPage.goto();
   await registerPage.fillForm(user);
   await registerPage.submit();
-  await expect(page).toHaveURL(/\/pomidorqa\/?$/);
+  // Без повторного submit: если регистрация уже прошла, повторная вернёт
+  // «email занят». Ждём редирект дольше обычного — стенд бывает медленным.
+  await expect(page).toHaveURL(/\/pomidorqa\/?$/, { timeout: 15_000 });
 }
 
 export async function registerUserViaApi(
@@ -108,18 +111,35 @@ export async function prepareHost(
   user: TestUser,
   skillTag: string,
   slotTime = "12:00",
-) {
-  await registerUserViaApi(page.context().request, user);
+  slotDate?: string,
+): Promise<RegisteredParticipant> {
+  const registered = await registerUserViaApi(page.context().request, user);
 
   const profile = new ProfilePage(page);
   await profile.goto();
-  await profile.addSkill(skillTag, "can_help");
-  await expect(profile.canHelpSkills).toContainText(skillTag);
+  // Клик «Добавить» может попасть в негидратированную страницу и быть
+  // проглочен. Повтор безопасен: дубликат навыка продукт отбрасывает.
+  await expect(async () => {
+    await profile.addSkill(skillTag, "can_help");
+    await expect(profile.canHelpSkills).toContainText(skillTag);
+  }).toPass({ timeout: 15_000 });
 
   const slots = new SlotsPage(page);
   await slots.goto();
-  await slots.addSlot(slotTime);
-  await expect(slots.firstSlotCard).toBeVisible();
+  // «Добавить слот» может попасть в негидратированную страницу (тогда слота
+  // нет на сервере) либо добавленный слот не успеть перерисоваться в списке.
+  // Повторное добавление даёт второй слот только при промахе первого клика,
+  // а перечитывание goto показывает серверное состояние в обоих случаях.
+  await expect(async () => {
+    await slots.addSlot(slotTime, slotDate);
+    const visible = await slots.firstSlotCard.isVisible().catch(() => false);
+    if (!visible) {
+      await slots.goto();
+    }
+    await expect(slots.firstSlotCard).toBeVisible();
+  }).toPass({ timeout: 20_000 });
+
+  return registered;
 }
 
 export async function loginUser(page: Page, user: TestUser) {

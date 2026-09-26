@@ -40,7 +40,14 @@ test.describe("Гость: доступ без регистрации", () => {
       });
 
       await test.step("Гость: открывает страницу участника", async () => {
-        await guestBookingPage.openPersonCard(host.name);
+        // Клик по карточке может попасть в негидратированную страницу и
+        // не запустить переход — повторяем клик, пока URL не сменится.
+        await expect(async () => {
+          if (!guestPage.url().includes("/pomidorqa/people/")) {
+            await guestBookingPage.openPersonCard(host.name);
+          }
+          await expect(guestPage).toHaveURL(/\/pomidorqa\/people\//);
+        }).toPass({ timeout: 15_000 });
       });
 
       await test.step("Страница участника доступна гостю: имя и свободные слоты", async () => {
@@ -78,8 +85,12 @@ test.describe("Гость: доступ без регистрации", () => {
       await test.step("Гость: открывает окно бронирования на первый слот хоста", async () => {
         await guestBookingPage.gotoCatalog();
         await guestBookingPage.searchBySkill(skillTag);
-        await guestBookingPage.openPersonCard(host.name);
-        await expect(guestPage).toHaveURL(/\/pomidorqa\/people\//);
+        await expect(async () => {
+          if (!guestPage.url().includes("/pomidorqa/people/")) {
+            await guestBookingPage.openPersonCard(host.name);
+          }
+          await expect(guestPage).toHaveURL(/\/pomidorqa\/people\//);
+        }).toPass({ timeout: 15_000 });
 
         await guestBookingPage.selectFirstSlot();
         await expect(guestBookingPage.confirmDialog).toBeVisible();

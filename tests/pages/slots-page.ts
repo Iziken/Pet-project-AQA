@@ -7,6 +7,10 @@ export class SlotsPage {
   timeInput: Locator;
   addSubmitButton: Locator;
   firstSlotCard: Locator;
+  slotCards: Locator;
+  freeSlotCard: Locator;
+  bookedSlotCard: Locator;
+  emptyState: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -15,7 +19,13 @@ export class SlotsPage {
     this.addSubmitButton = page.getByRole("button", {
       name: "Добавить слот",
     });
-    this.firstSlotCard = page.locator("[data-slot-id]").first();
+    this.slotCards = page.locator("[data-slot-id]");
+    this.freeSlotCard = page.locator('[data-slot-id][data-slot-status="free"]');
+    this.bookedSlotCard = page.locator(
+      '[data-slot-id][data-slot-status="booked"]',
+    );
+    this.firstSlotCard = this.slotCards.first();
+    this.emptyState = page.getByText("Пока нет запланированных слотов");
   }
 
   async goto() {
@@ -33,5 +43,11 @@ export class SlotsPage {
     await this.dateInput.fill(targetDate);
     await this.timeInput.fill(time);
     await this.addSubmitButton.click();
+  }
+
+  async removeFreeSlot() {
+    await this.freeSlotCard.first()
+      .getByRole("button", { name: "Удалить" })
+      .click();
   }
 }

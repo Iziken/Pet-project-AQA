@@ -7,6 +7,7 @@ export class RegisterPage {
   emailInput: Locator;
   passwordInput: Locator;
   submitButton: Locator;
+  errorAlert: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -16,6 +17,9 @@ export class RegisterPage {
     this.submitButton = page.getByRole("button", {
       name: "Зарегистрироваться",
     });
+    // Ошибка формы — alert внутри main; вне main живёт пустой role="alert"
+    // роутера Next (__next-route-announcer__), его ловить нельзя.
+    this.errorAlert = page.getByRole("main").getByRole("alert");
   }
 
   async goto() {

@@ -88,8 +88,12 @@ test.describe("Каталог: поиск по навыку", () => {
         await registerUserViaApi(hostContext.request, host);
 
         await hostProfile.goto();
-        await hostProfile.addSkill(skillTag, "can_help");
-        await expect(hostProfile.canHelpSkills).toContainText(skillTag);
+        // Клик «Добавить» может попасть в негидратированную страницу и быть
+        // проглочен. Повтор безопасен: дубликат навыка продукт отбрасывает.
+        await expect(async () => {
+          await hostProfile.addSkill(skillTag, "can_help");
+          await expect(hostProfile.canHelpSkills).toContainText(skillTag);
+        }).toPass({ timeout: 15_000 });
       });
 
       await test.step("Гость: регистрируется через API и ищет по навыку хоста", async () => {

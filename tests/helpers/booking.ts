@@ -76,8 +76,15 @@ export async function openBookingDialogForFirstSlot(
   skillTag: string,
   hostName: string,
 ) {
-  await bookingPage.navigateToHostProfile(skillTag, hostName);
-  await expect(bookingPage.personHeading).toHaveText(hostName);
+  // Клик по карточке может попасть в негидратированную страницу и не
+  // запустить переход — повторяем навигацию, пока URL не сменится
+  // на страницу участника и заголовок не совпадёт с именем хоста.
+  await expect(async () => {
+    if (!bookingPage.page.url().includes("/pomidorqa/people/")) {
+      await bookingPage.navigateToHostProfile(skillTag, hostName);
+    }
+    await expect(bookingPage.personHeading).toHaveText(hostName);
+  }).toPass({ timeout: 15_000 });
 
   await bookingPage.ensureCalendarVisible();
   await bookingPage.selectFirstSlot();

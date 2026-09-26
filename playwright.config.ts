@@ -1,10 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  // Локально 30 секунд хватает с запасом. В CI каждый шаг дороже: runner дальше от стенда,
-  // а тесты с бронированием готовят в beforeEach двух участников, навык, слот и саму бронь
-  // через UI — этот Arrange не укладывается в 30 секунд и падает не на проверке, а по таймауту.
-  timeout: process.env.CI ? 90_000 : 30_000,
+  // Одинаково локально и в CI: тяжёлые сценарии (бронирование с двумя
+  // контекстами, Arrange через UI) на медленном общем стенде не укладываются
+  // в 30 секунд и падают не на проверке, а по таймауту — проверено прогонами.
+  timeout: 90_000,
   fullyParallel: false,
   // В CI повторяем падение один раз, чтобы заметить флак; локально ошибка видна сразу.
   retries: process.env.CI ? 1 : 0,
@@ -34,6 +34,28 @@ export default defineConfig({
       testDir: "./tests/e2e",
       use: {
         ...devices["Desktop Chrome"],
+        baseURL: process.env.POMIDORQA_BASE_URL ?? "https://aiqa.su",
+        trace: "retain-on-failure",
+        screenshot: "only-on-failure",
+        video: "retain-on-failure",
+      },
+    },
+    {
+      name: "e2e-firefox",
+      testDir: "./tests/e2e",
+      use: {
+        ...devices["Desktop Firefox"],
+        baseURL: process.env.POMIDORQA_BASE_URL ?? "https://aiqa.su",
+        trace: "retain-on-failure",
+        screenshot: "only-on-failure",
+        video: "retain-on-failure",
+      },
+    },
+    {
+      name: "e2e-webkit",
+      testDir: "./tests/e2e",
+      use: {
+        ...devices["Desktop Safari"],
         baseURL: process.env.POMIDORQA_BASE_URL ?? "https://aiqa.su",
         trace: "retain-on-failure",
         screenshot: "only-on-failure",

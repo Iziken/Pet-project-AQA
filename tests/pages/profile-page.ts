@@ -58,4 +58,10 @@ export class ProfilePage {
   skillChip(tag: string) {
     return this.page.locator(`[data-skill-tag="${tag}"]`);
   }
+
+  async removeSkill(tag: string) {
+    await this.skillChip(tag)
+      .getByRole("button", { name: `Убрать ${tag}` })
+      .click();
+  }
 }

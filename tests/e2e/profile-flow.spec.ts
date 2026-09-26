@@ -145,6 +145,25 @@ test.describe("Профиль: действия с полями", () => {
     });
   });
 
+  test("навык: удаляем добавленный", async ({ page }) => {
+    const skillTag = `RemoveMe-${Date.now()}`;
+
+    await test.step("Добавляем навык «могу помочь»", async () => {
+      await profile.addSkill(skillTag, "can_help");
+      await expect(profile.skillChip(skillTag)).toBeVisible();
+    });
+
+    await test.step("Убираем навык кнопкой на чипе", async () => {
+      await profile.removeSkill(skillTag);
+    });
+
+    await test.step("Чип исчез и после перезагрузки не вернулся", async () => {
+      await expect(profile.skillChip(skillTag)).toHaveCount(0);
+      await profile.reload();
+      await expect(profile.skillChip(skillTag)).toHaveCount(0);
+    });
+  });
+
   test("форма профиля: три поля сохраняются за один раз", async ({ page }) => {
     const runId = Date.now();
     const name = `Тимур Тестовый ${runId}`;

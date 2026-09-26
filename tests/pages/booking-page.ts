@@ -7,6 +7,7 @@ export class BookingPage {
   filterInput: Locator;
   filterSubmitButton: Locator;
   personHeading: Locator;
+  noSlotsMessage: Locator;
   personCards: Locator;
 
   calendarDays: Locator;
@@ -22,6 +23,7 @@ export class BookingPage {
   upcomingBookings: Locator;
   pastMeetingsSection: Locator;
   pastBookings: Locator;
+  cancelErrorAlert: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -29,6 +31,7 @@ export class BookingPage {
     this.filterSubmitButton = page.getByRole("button", { name: "Найти" });
     this.personCards = page.getByTestId("person-card");
     this.personHeading = page.getByRole("heading", { level: 1 });
+    this.noSlotsMessage = page.getByText("Сейчас свободных слотов нет");
 
     this.calendarDays = page
       .getByRole("group", { name: "Дни со слотами" })
@@ -51,10 +54,20 @@ export class BookingPage {
       .locator("section")
       .filter({ hasText: "Прошедшие и отменённые" });
     this.pastBookings = this.pastMeetingsSection.locator("[data-booking-id]");
+    this.cancelErrorAlert = page.getByRole("main").getByRole("alert");
   }
 
   getPersonCard(name: string): Locator {
     return this.personCards.filter({ hasText: name });
+  }
+
+  // Страница участника: био выводится абзацем с текстом профиля.
+  personBio(text: string): Locator {
+    return this.page.getByText(text);
+  }
+
+  personSkillChip(tag: string): Locator {
+    return this.page.locator(`[data-skill-tag="${tag}"]`);
   }
 
   async searchBySkill(skillTag: string) {
@@ -116,6 +129,10 @@ export class BookingPage {
     await this.confirmButton.click();
   }
 
+  async cancelBookingConfirmation() {
+    await this.confirmDialog.getByRole("button", { name: "Отмена" }).click();
+  }
+
   async goto() {
     await this.page.goto(ROUTES.booking);
   }
@@ -132,5 +149,11 @@ export class BookingPage {
     const booking = this.upcomingBookingByParticipant(name);
     await booking.getByRole("button", { name: "Отменить" }).click();
     await booking.waitFor({ state: "detached" });
+  }
+
+  async requestCancellation(name: string) {
+    await this.upcomingBookingByParticipant(name)
+      .getByRole("button", { name: "Отменить" })
+      .click();
   }
 }

@@ -143,3 +143,72 @@ test("отмена встречи хостом, после reload отмену �
     await cleanupUsersViaApi([hostContext, guestContext]);
   }
 });
+
+test("отмена запрещена позднее чем за 2 часа до начала", async ({ browser }) => {
+  const runId = Date.now();
+  const skillTag = makeRandom("Playwright-demo");
+  const host = makeUser("host", runId);
+  const guest = makeUser("guest", runId);
+
+  // Начало звонка: сейчас + 90 минут в поясе хоста (Europe/Moscow) —
+  // в будущем, но внутри двухчасового окна запрета отмены.
+  const target = new Date(Date.now() + 90 * 60 * 1000);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(target).reduce<Record<string, string>>(
+    (acc, p) => ((acc[p.type] = p.value), acc),
+    {},
+  );
+  const slotDate = `${parts.year}-${parts.month}-${parts.day}`;
+  const slotTime = `${parts.hour}:${parts.minute}`;
+
+  const hostContext = await browser.newContext(UTC_CONTEXT_OPTIONS);
+  const guestContext = await browser.newContext(UTC_CONTEXT_OPTIONS);
+
+  const hostPage = await hostContext.newPage();
+  const guestPage = await guestContext.newPage();
+
+  const guestBookingPage = new BookingPage(guestPage);
+
+  try {
+    await test.step("Хост: добавляет навык и слот, который начинается меньше чем через два часа", async () => {
+      await prepareHost(hostPage, host, skillTag, slotTime, slotDate);
+    });
+
+    await test.step("Гость: бронирует этот слот", async () => {
+      await registerUserViaApi(guestContext.request, guest);
+      await bookFirstSlot(guestBookingPage, skillTag, host.name);
+    });
+
+    await test.step("Гость: в «Моих встречах» жмёт «Отменить»", async () => {
+      await guestBookingPage.openUpcomingMeetings(host.name);
+      await expect(
+        guestBookingPage.upcomingBookingByParticipant(host.name),
+      ).toBeVisible();
+      await guestBookingPage.requestCancellation(host.name);
+    });
+
+    await test.step("Продукт отказывает: сообщение про окно двух часов", async () => {
+      await expect(guestBookingPage.cancelErrorAlert).toContainText(
+        "не позже чем за 2 часа",
+      );
+    });
+
+    await test.step("Встреча осталась в «Ближайших», в отмененных её нет", async () => {
+      await expect(
+        guestBookingPage.upcomingBookingByParticipant(host.name),
+      ).toBeVisible();
+      await expect(
+        guestBookingPage.pastBookingByParticipant(host.name),
+      ).toHaveCount(0);
+    });
+  } finally {
+    await cleanupUsersViaApi([hostContext, guestContext]);
+  }
+});

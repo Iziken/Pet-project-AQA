@@ -185,6 +185,16 @@ jobs:
         if: steps.cache-playwright.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
 
+      # Быстрая проверка живого стенда перед прогоном: если он недоступен,
+      # джоба падает сразу с понятной причиной вместо полотна ETIMEDOUT
+      # в каждом тесте на протяжении всех 20 минут.
+      - name: Check stand availability
+        run: |
+          if ! curl -sf --max-time 15 "https://aiqa.su/pomidorqa" -o /dev/null; then
+            echo "::warning::Стенд https://aiqa.su/pomidorqa недоступен — e2e отменены, это проблема среды, а не тестов"
+            exit 1
+          fi
+
       # Метрика: Стабильность критических пользовательских сценариев.
       - name: Run Playwright E2E tests
         run: npm run test:e2e
@@ -201,12 +211,51 @@ jobs:
           path: playwright-report/
           retention-days: 14 # Метрика хранения: Ограничиваем жизнь артефактов 14 днями, чтобы не тратить дисковую квоту
 
+      # Сводка метрик прогона прямо в Step Summary — видна на странице прогона
+      # без скачивания артефакта. `|| true` не блокирует: джоба уже покраснела тестами.
+      - name: Test metrics to job summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### 🍅 Результаты E2E (Chromium)"
+            echo '```'
+            node scripts/test-metrics.mjs playwright-report/results.json || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # =========================================================================
+  # JOB: ТРАССИРОВКА ТРЕБОВАНИЙ (матрица покрытия ↔ фактические тесты)
+  # =========================================================================
+  traceability:
+    name: Requirement traceability
+    needs: lint
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      # Каждая ссылка матрицы «tests/...spec.ts → название теста» обязана
+      # указывать на существующий тест: трассировка не может расходиться с кодом.
+      - name: Check coverage matrix references
+        run: node scripts/check-traceability.mjs
+
   # =========================================================================
   # JOB 6: ПОЛНАЯ DORA-АНАЛИТИКА И СБОР МЕТРИК В TELEGRAM
   # =========================================================================
   notify:
     name: Telegram Notification & DORA Metrics
-    needs: [lint, unit, api, performance, e2e]
+    needs: [lint, unit, api, performance, e2e, traceability]
     runs-on: ubuntu-latest
     if: always() # Джоба запустится всегда, чтобы мы получили отчет и при успехе, и при ошибке
 
@@ -274,10 +323,11 @@ jobs:
             • API тесты: ${{ needs.api.result == 'success' && '✅ Успешно' || (needs.api.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
             • UX Perf (Lighthouse): ${{ needs.performance.result == 'success' && '✅ Успешно' || (needs.performance.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
             • E2E тесты: ${{ needs.e2e.result == 'success' && '✅ Успешно' || (needs.e2e.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
+            • Трассировка требований: ${{ needs.traceability.result == 'success' && '✅ Успешно' || (needs.traceability.result == 'skipped' && '⏭️ Пропущено' || '❌ Ошибка') }}
 
             *⏱️ Эффективность пайплайна (DORA):*
             • Время выполнения (Duration): `${{ steps.metrics.outputs.duration }}`
-            • Итог сборки: ${{ (needs.lint.result == 'success' && needs.unit.result == 'success' && needs.api.result == 'success' && needs.performance.result == 'success' && needs.e2e.result == 'success') && '🟢 SUCCESS' || '🔴 FAILED' }}
+            • Итог сборки: ${{ (needs.lint.result == 'success' && needs.unit.result == 'success' && needs.api.result == 'success' && needs.performance.result == 'success' && needs.e2e.result == 'success' && needs.traceability.result == 'success') && '🟢 SUCCESS' || '🔴 FAILED' }}
 
             🚀 [Открыть логи сборки](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
             ${{ github.event.pull_request.html_url && format('👀 [Открыть Pull Request]({0})', github.event.pull_request.html_url) || '' }}

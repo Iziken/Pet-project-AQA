@@ -1,0 +1,126 @@
+# Ночной прогон: то, что дорого гонять на каждый PR, но полезно раз в сутки.
+# Кросс-браузерная регрессия (Firefox, WebKit) и анти-флак проверка
+# booking-спеков с пятикратным повтором.
+name: Nightly checks
+
+# Расписание работает только на ветке по умолчанию (main);
+# кнопка Run workflow — на любой ветке вручную.
+on:
+  schedule:
+    - cron: "30 3 * * *" # ежедневно в 03:30 UTC — до начала рабочего дня
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # =========================================================================
+  # JOB 1: КРОСС-БРАУЗЕРНАЯ РЕГРЕССИЯ (Firefox, WebKit)
+  # =========================================================================
+  cross-browser:
+    name: E2E / ${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false # один браузер не отменяет проверку второго
+      matrix:
+        browser: [firefox, webkit]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install ${{ matrix.browser }}
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      # На PR гоняется только Chromium (job e2e в playwright.yml);
+      # ночью добираем остальные браузеры.
+      - name: Run E2E tests
+        run: npx playwright test --project=e2e-${{ matrix.browser }}
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.browser }}-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 14
+
+  # =========================================================================
+  # JOB 2: АНТИ-ФЛАК — booking-сценарии ×5 (самые тяжёлые и самые важные)
+  # =========================================================================
+  anti-flak:
+    name: Booking specs ×5
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+
+      # CI не задаём: retries в этом прогоне обязаны быть выключены —
+      # задача именно поймать флак, а не замаскировать его. Один worker
+      # бережёт общий стенд от конкуренции за данные.
+      - name: Run booking specs with 5x repeat
+        run: npx playwright test tests/e2e/booking-flow.spec.ts tests/e2e/booking-cancel.spec.ts --repeat-each=5 --workers=1
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-antiflak-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 14
+
+  # =========================================================================
+  # JOB 3: УВЕДОМЛЕНИЕ В TELEGRAM
+  # =========================================================================
+  notify:
+    name: Telegram notification
+    needs: [cross-browser, anti-flak]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Send Telegram Message
+        uses: appleboy/telegram-action@v1.1.1
+        if: always()
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          format: markdown
+          message: |
+            ${{ (needs.cross-browser.result == 'success' && needs.anti-flak.result == 'success') && '🟢 *НОЧНОЙ ПРОГОН УСПЕШЕН!*' || '🔴 *НОЧНОЙ ПРОГОН: ЕСТЬ ПАДЕНИЯ!*' }}
+
+            *🌙 Что гонялось:* E2E в Firefox и WebKit + booking-сценарии ×5 на флапы
+            *📦 Репозиторий:* `${{ github.repository }}`
+
+            *📊 Статус:*
+            • Cross-browser: ${{ needs.cross-browser.result == 'success' && '✅ Успешно' || '❌ Падения' }}
+            • Анти-флак (×5): ${{ needs.anti-flak.result == 'success' && '✅ Успешно' || '❌ Падения' }}
+
+            🚀 [Открыть логи сборки](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})

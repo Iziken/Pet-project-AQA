@@ -12,7 +12,8 @@
     "lint": "eslint tests",
     "metrics": "node scripts/test-metrics.mjs playwright-report/results.json",
     "gate": "npm run typecheck && npm run lint && npm test",
-    "report": "playwright show-report"
+    "report": "playwright show-report",
+    "test:traceability": "node scripts/check-traceability.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",

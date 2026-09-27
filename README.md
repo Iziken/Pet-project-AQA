@@ -99,6 +99,7 @@ npm run test:e2e -- --project=e2e-firefox   # e2e в Firefox
 npm run test:e2e -- --project=e2e-webkit    # e2e в WebKit
 npm run gate        # typecheck + lint + все тесты
 npm run metrics     # сводка по playwright-report/results.json
+npm run test:traceability  # сверка матрицы покрытия с фактическими тестами
 npm run report      # HTML-отчёт последнего прогона
 ```
 
@@ -127,23 +128,38 @@ GitHub Actions запускает проверки при `push` в `main`, Pull
 
 ### CI Flow
 
-| Этап                       | Что запускается               | Условие                                      |
-| -------------------------- | ----------------------------- | -------------------------------------------- |
-| **1. Static Analysis**     | TypeScript + ESLint           | Запускается первым                           |
-| **2. Tests & Performance** | Unit + API + E2E + Lighthouse | После успешного Static Analysis, параллельно |
-| **3. Reporting**           | Telegram + DORA Metrics       | После завершения всех проверок               |
+| Этап                       | Что запускается                                        | Условие                                      |
+| -------------------------- | ------------------------------------------------------ | -------------------------------------------- |
+| **1. Static Analysis**     | TypeScript + ESLint                                    | Запускается первым                           |
+| **2. Tests & Performance** | Unit + API + E2E + Lighthouse + Трассировка требований | После успешного Static Analysis, параллельно |
+| **3. Reporting**           | Telegram + DORA Metrics                                | После завершения всех проверок               |
 
 ### CI Jobs
 
-| Job                   | Проверяет                     | Команда                             |
-| --------------------- | ----------------------------- | ----------------------------------- |
-| **Lint & Type Check** | TypeScript + ESLint           | `npx tsc --noEmit` · `npm run lint` |
-| **Unit Tests**        | Изолированные функции         | `npm run test:unit`                 |
-| **API Tests**         | API и контракты данных        | `npm run test:api`                  |
-| **UX Performance**    | Performance + Core Web Vitals | `lhci autorun`                      |
-| **E2E Tests**         | Пользовательские сценарии     | `npm run test:e2e`                  |
-| **Reports**           | HTML / JSON / JUnit           | Автоматически (шаг в e2e-джобе)     |
-| **Notifications**     | CI status + DORA Metrics      | Telegram                            |
+| Job                          | Проверяет                              | Команда                               |
+| ---------------------------- | -------------------------------------- | ------------------------------------- |
+| **Lint & Type Check**        | TypeScript + ESLint                    | `npx tsc --noEmit` · `npm run lint`   |
+| **Unit Tests**               | Изолированные функции                  | `npm run test:unit`                   |
+| **API Tests**                | API и контракты данных                 | `npm run test:api`                    |
+| **UX Performance**           | Performance + Core Web Vitals          | `lhci autorun`                        |
+| **E2E Tests**                | Пользовательские сценарии (Chromium)   | `npm run test:e2e`                    |
+| **Requirement Traceability** | Матрица покрытия ↔ фактические тесты   | `node scripts/check-traceability.mjs` |
+| **Reports**                  | HTML / JSON / JUnit                    | Автоматически (шаг в e2e-джобе)       |
+| **Notifications**            | CI status + DORA Metrics               | Telegram                              |
+
+Перед e2e выполняется **проба стенда**: если `aiqa.su/pomidorqa` недоступен, джоба падает
+сразу с понятным `::warning` вместо 20 минут полотна ETIMEDOUT. После прогона сводка
+метрик (`npm run metrics`) дописывается в **Step Summary** — результат виден на странице
+прогона без скачивания артефакта.
+
+### Ночной прогон
+
+Отдельный workflow `nightly.yml` — по расписанию (`cron: 30 3 * * *`, работает на ветке
+по умолчанию) и вручную через `workflow_dispatch`:
+
+- **Cross-browser** — e2e в Firefox и WebKit (matrix-стратегия, параллельные джобы). На PR гоняется только Chromium, чтобы не удлинять проверку;
+- **Анти-флак** — booking-сценарии с `--repeat-each=5` и одним worker'ом; retries выключены намеренно — задача поймать флак, а не замаскировать;
+- **Telegram-уведомление** — итог ночного прогона в общий канал.
 
 ### Reports & Artifacts
 

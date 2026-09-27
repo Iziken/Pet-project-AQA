@@ -1,6 +1,12 @@
 # Ночной прогон: то, что дорого гонять на каждый PR, но полезно раз в сутки.
 # Кросс-браузерная регрессия (Firefox, WebKit) и анти-флак проверка
 # booking-спеков с пятикратным повтором.
+#
+# Защита минут: job-«страж» (guard) перед тестами сравнивает состояние
+# с прошлым ночным прогоном — SHA репозитория и хэш билда стенда.
+# Если ничего не изменилось, тесты пропускаются. Падение прошлого прогона
+# даёт повторный прогон — поломка не должна «пропадать» из-за отсутствия
+# новых коммитов. Прогон принудительно включается флагом force.
 name: Nightly checks
 
 # Расписание работает только на ветке по умолчанию (main);
@@ -9,6 +15,11 @@ on:
   schedule:
     - cron: "30 3 * * *" # ежедневно в 03:30 UTC — до начала рабочего дня
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Прогнать, даже если ничего не изменилось"
+        type: boolean
+        default: false
 
 concurrency:
   group: nightly-${{ github.ref }}
@@ -16,10 +27,96 @@ concurrency:
 
 jobs:
   # =========================================================================
+  # JOB 0: СТРАЖ — гонять ли вообще
+  # =========================================================================
+  guard:
+    name: Change detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+
+    steps:
+      # Хэш стенда строится из билд-идентификатора Next.js в разметке
+      # страницы: он меняется только при деплое продукта, а не при каждом
+      # добавлении слота участниками.
+      - name: Compute stand build hash
+        id: stand
+        run: |
+          HTML=$(curl -sf --max-time 15 "https://aiqa.su/pomidorqa")
+          if [ -z "$HTML" ]; then
+            # Стенд недоступен: считаем это изменением — ночной прогон
+            # упадёт на тестах и Telegram покажет, что со стендом беда.
+            echo "hash=stand-unreachable" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          BUILD_REF=$(printf '%s' "$HTML" | grep -oE '/_next/static/[A-Za-z0-9_-]+/' | head -1)
+          if [ -n "$BUILD_REF" ]; then
+            HASH=$(printf '%s' "$BUILD_REF" | shasum -a 256 | cut -d' ' -f1)
+          else
+            # Запасной путь: хэш всей разметки, если билд-идентификатор
+            # не найден (изменилась структура страницы).
+            HASH=$(printf '%s' "$HTML" | shasum -a 256 | cut -d' ' -f1)
+          fi
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+
+      # Кэш с точным ключом «stand-<hash>»: попадание означает, что такой
+      # билд стенда уже проверялся ночным прогоном. Промах — деплой,
+      # который ещё не проверялся.
+      - name: Restore stand state
+        id: stand-state
+        uses: actions/cache@v4
+        with:
+          path: nightly-stand-state
+          key: stand-${{ steps.stand.outputs.hash }}
+
+      - name: Decide whether to run
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+          STAND_HASH: ${{ steps.stand.outputs.hash }}
+        run: |
+          set -euo pipefail
+
+          # Последний завершившийся ночной прогон (у текущего ещё нет conclusion).
+          LAST=$(gh api "repos/${{ github.repository }}/actions/workflows/nightly.yml/runs?per_page=20" \
+            --jq '[.workflow_runs[] | select(.conclusion != null)][0] | "\(.head_sha) \(.conclusion)"' || true)
+
+          REPO_SHA="${{ github.sha }}"
+          FORCE_FLAG="$FORCE"
+
+          decide() {
+            echo "skip=$1" >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "$FORCE_FLAG" = "true" ]; then
+            echo "Принудительный прогон (force=true)"
+            decide "false"
+          elif [ -z "$LAST" ]; then
+            echo "Первый ночной прогон — запускаем"
+            decide "false"
+          elif [ "${LAST%% *}" != "$REPO_SHA" ]; then
+            echo "В репозитории есть новые коммиты — запускаем"
+            decide "false"
+          elif [ "${LAST#* }" = "failure" ]; then
+            echo "Прошлый ночной прогон упал — повторяем, поломка не должна пропасть"
+            decide "false"
+          elif [ "${{ steps.stand-state.outputs.cache-hit }}" != "true" ]; then
+            echo "Стенд изменился (новый билд) — запускаем"
+            decide "false"
+          else
+            echo "Изменений нет ни в репо, ни на стенде — пропускаем"
+            decide "true"
+          fi
+
+  # =========================================================================
   # JOB 1: КРОСС-БРАУЗЕРНАЯ РЕГРЕССИЯ (Firefox, WebKit)
   # =========================================================================
   cross-browser:
     name: E2E / ${{ matrix.browser }}
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -63,6 +160,8 @@ jobs:
   # =========================================================================
   anti-flak:
     name: Booking specs ×5
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -101,7 +200,7 @@ jobs:
   # =========================================================================
   notify:
     name: Telegram notification
-    needs: [cross-browser, anti-flak]
+    needs: [guard, cross-browser, anti-flak]
     runs-on: ubuntu-latest
     if: always()
 
@@ -114,13 +213,15 @@ jobs:
           token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           format: markdown
           message: |
-            ${{ (needs.cross-browser.result == 'success' && needs.anti-flak.result == 'success') && '🟢 *НОЧНОЙ ПРОГОН УСПЕШЕН!*' || '🔴 *НОЧНОЙ ПРОГОН: ЕСТЬ ПАДЕНИЯ!*' }}
+            ${{ needs.guard.outputs.skip == 'true' && '⏭️ *НОЧНОЙ ПРОГОН ПРОПУЩЕН: изменений нет*' || ((needs.cross-browser.result == 'success' && needs.anti-flak.result == 'success') && '🟢 *НОЧНОЙ ПРОГОН УСПЕШЕН!*' || '🔴 *НОЧНОЙ ПРОГОН: ЕСТЬ ПАДЕНИЯ!*') }}
 
             *🌙 Что гонялось:* E2E в Firefox и WebKit + booking-сценарии ×5 на флапы
             *📦 Репозиторий:* `${{ github.repository }}`
 
             *📊 Статус:*
-            • Cross-browser: ${{ needs.cross-browser.result == 'success' && '✅ Успешно' || '❌ Падения' }}
-            • Анти-флак (×5): ${{ needs.anti-flak.result == 'success' && '✅ Успешно' || '❌ Падения' }}
+            • Страж: ${{ needs.guard.result == 'success' && '✅ Успешно' || '❌ Ошибка' }}
+            • Пропуск по изменениям: ${{ needs.guard.outputs.skip == 'true' && 'да — минуты сэкономлены' || 'нет — тесты гонялись' }}
+            • Cross-browser: ${{ needs.cross-browser.result == 'success' && '✅ Успешно' || (needs.cross-browser.result == 'skipped' && '⏭️ Пропущено' || '❌ Падения') }}
+            • Анти-флак (×5): ${{ needs.anti-flak.result == 'success' && '✅ Успешно' || (needs.anti-flak.result == 'skipped' && '⏭️ Пропущено' || '❌ Падения') }}
 
             🚀 [Открыть логи сборки](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})

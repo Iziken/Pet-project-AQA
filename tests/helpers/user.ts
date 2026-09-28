@@ -126,12 +126,14 @@ export async function prepareHost(
 
   const slots = new SlotsPage(page);
   await slots.goto();
-  // «Добавить слот» может попасть в негидратированную страницу (тогда слота
-  // нет на сервере) либо добавленный слот не успеть перерисоваться в списке.
-  // Повторное добавление даёт второй слот только при промахе первого клика,
-  // а перечитывание goto показывает серверное состояние в обоих случаях.
+  // «Добавить слот» отправляет серверный action с переходом. Проверка
+  // isVisible во время этого перехода возвращает false, и goto в ретрае
+  // отменял POST на полуслове — слот не создавался (проявилось на WebKit
+  // в CI). waitForLoadState даёт переходу докрутиться: карточка появляется
+  // на перерендеренной странице, и goto остаётся только для крайних случаев.
   await expect(async () => {
     await slots.addSlot(slotTime, slotDate);
+    await slots.page.waitForLoadState("load");
     const visible = await slots.firstSlotCard.isVisible().catch(() => false);
     if (!visible) {
       await slots.goto();

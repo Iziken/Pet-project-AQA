@@ -183,9 +183,11 @@ jobs:
 
       # CI не задаём: retries в этом прогоне обязаны быть выключены —
       # задача именно поймать флак, а не замаскировать его. Один worker
-      # бережёт общий стенд от конкуренции за данные.
+      # бережёт общий стенд от конкуренции за данные. Проект ограничен
+      # Chromium: в этой джобе стоит только он, а кросс-браузерность
+      # проверяет соседняя matrix-джоба.
       - name: Run booking specs with 5x repeat
-        run: npx playwright test tests/e2e/booking-flow.spec.ts tests/e2e/booking-cancel.spec.ts --repeat-each=5 --workers=1
+        run: npx playwright test tests/e2e/booking-flow.spec.ts tests/e2e/booking-cancel.spec.ts --project=e2e --repeat-each=5 --workers=1
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}

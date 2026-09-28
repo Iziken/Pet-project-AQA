@@ -126,16 +126,21 @@ export async function prepareHost(
 
   const slots = new SlotsPage(page);
   await slots.goto();
-  // «Добавить слот» отправляет серверный action с переходом. Проверка
-  // isVisible во время этого перехода возвращает false, и goto в ретрае
-  // отменял POST на полуслове — слот не создавался (проявилось на WebKit
-  // в CI). waitForLoadState даёт переходу докрутиться: карточка появляется
-  // на перерендеренной странице, и goto остаётся только для крайних случаев.
+  // Ретрай повторяет добавление слота (как в работающих тестах без ретрая).
+  // ВРЕМЕННАЯ диагностика (убрать после разбора CI-WebKit): перед повтором
+  // логируем состояние страницы — оно попадает в results.json.
   await expect(async () => {
     await slots.addSlot(slotTime, slotDate);
-    await slots.page.waitForLoadState("load");
     const visible = await slots.firstSlotCard.isVisible().catch(() => false);
     if (!visible) {
+      const state = {
+        url: page.url(),
+        слоты: await slots.slotCards.count().catch(() => -1),
+        дата: await slots.dateInput.inputValue().catch(() => "?"),
+        время: await slots.timeInput.inputValue().catch(() => "?"),
+        пусто: await slots.emptyState.isVisible().catch(() => false),
+      };
+      console.log("[prepareHost] карточка не появилась:", JSON.stringify(state));
       await slots.goto();
     }
     await expect(slots.firstSlotCard).toBeVisible();

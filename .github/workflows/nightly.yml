@@ -152,7 +152,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nightly-${{ matrix.browser }}-${{ github.run_id }}
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 14
 
   # =========================================================================
@@ -194,7 +196,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nightly-antiflak-${{ github.run_id }}
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 14
 
   # =========================================================================

@@ -203,12 +203,15 @@ jobs:
 
       # Инструмент отладки: Сохраняем логи, скриншоты падений и файлы трассировки (.zip) в артефакты GitHub Actions.
       # Шаг выполнится, даже если тесты упали (`!cancelled()`), чтобы инженеры могли скачать и разобрать ошибки.
+      # test-results/ содержит error-context.md и trace упавших тестов — без него доказательств падения нет.
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ github.run_id }}
-          path: playwright-report/
+          path: |
+            playwright-report/
+            test-results/
           retention-days: 14 # Метрика хранения: Ограничиваем жизнь артефактов 14 днями, чтобы не тратить дисковую квоту
 
       # Сводка метрик прогона прямо в Step Summary — видна на странице прогона

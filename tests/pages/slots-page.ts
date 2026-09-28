@@ -42,7 +42,23 @@ export class SlotsPage {
 
     await this.dateInput.fill(targetDate);
     await this.timeInput.fill(time);
+    // «Добавить слот» отправляет fetch (серверный action) и не перерисовывает
+    // список во всех браузерах одинаково: в WebKit карточка появляется с
+    // задержкой. Ждём сам POST-ответ — без него карточки не будет, а ретрай
+    // с переходом обрывает fetch на полуслове.
+    const postResponse = this.page.waitForResponse(
+      (response) =>
+        response.url().includes("/pomidorqa/profile/slots") &&
+        response.request().method() === "POST",
+      { timeout: 15_000 },
+    );
     await this.addSubmitButton.click();
+    const response = await postResponse;
+    if (response.status() >= 400) {
+      throw new Error(
+        `Добавление слота не удалось: ${response.status()} ${await response.text()}`,
+      );
+    }
   }
 
   async removeFreeSlot() {
